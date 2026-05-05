@@ -362,6 +362,54 @@
           "refreshModels": "Actualizar modelos"
         }
       },
+      "command": {
+        "title": "External Command",
+        "toggle": {
+          "title": "Use External Command",
+          "description": "Run a local command like Codex or Claude instead of calling an OpenAI-compatible API. Handy passes the selected prompt and transcript to the command and uses stdout as the result."
+        },
+        "program": {
+          "title": "Program",
+          "description": "Executable to run for post-processing.",
+          "placeholder": "codex"
+        },
+        "workingDirectory": {
+          "title": "Working Directory",
+          "description": "Optional working directory for the command. Use this for repos or notes folders the command should operate inside.",
+          "placeholder": "/path/to/project",
+          "browse": "Browse"
+        },
+        "args": {
+          "title": "Arguments",
+          "description": "One argument per line. Handy replaces placeholders before launching the command. Raw stdout is pasted. To show a notification instead, output JSON like {\"action\":\"notify\",\"message\":\"Updated projects\"}.",
+          "placeholder": "exec\n--cwd\n{{cwd}}\n{{prompt}}",
+          "tip": "Available placeholders: {{prompt}}, {{prompt_template}}, {{transcript}}, {{prompt_file}}, {{transcript_file}}, {{cwd}}"
+        },
+        "help": {
+          "title": "Examples",
+          "description": "Suggested non-interactive command setups for common agent CLIs.",
+          "programLabel": "Program:",
+          "codex": {
+            "title": "Codex",
+            "program": "/Users/marchowell/.bun/bin/codex",
+            "args": "exec\n--skip-git-repo-check\n--sandbox\nworkspace-write\n--color\nnever\n{{prompt}}"
+          },
+          "claude": {
+            "title": "Claude",
+            "program": "/Users/marchowell/.local/bin/claude",
+            "args": "-p\n--permission-mode\nbypassPermissions\n--output-format\ntext\n{{prompt}}"
+          },
+          "notification": {
+            "title": "Notification Output",
+            "example": "{\"action\":\"notify\",\"message\":\"Updated projects\"}"
+          }
+        },
+        "validation": {
+          "missingProgram": "External Command mode is enabled, but Program is empty. Enter an executable like `codex` or `claude` before using trigger words.",
+          "missingArgs": "External Command mode is enabled, but Arguments is empty. Add a non-interactive command such as `exec`, `-p`, or other required flags before using trigger words.",
+          "missingProgramAndArgs": "External Command mode is enabled, but Program and Arguments are not configured yet. Trigger words will not work until both are set."
+        }
+      },
       "prompts": {
         "title": "Prompt",
         "selectedPrompt": {
@@ -382,6 +430,14 @@
         "cancel": "Cancelar",
         "selectToEdit": "Selecciona un prompt arriba para ver y editar sus detalles.",
         "createFirst": "Haz clic en 'Crear Nuevo Prompt' arriba para crear tu primer prompt de post procesamiento."
+      },
+      "triggerWords": {
+        "title": "Trigger Words",
+        "description": "When the first word of a transcription matches a trigger word, the trigger word is stripped and the remaining text is routed through the LLM automatically. Works with the regular transcribe shortcut so you don't pay LLM latency unless you need it.",
+        "placeholder": "e.g. Claude",
+        "add": "Add",
+        "remove": "Remove {{word}}",
+        "duplicate": "\"{{word}}\" is already in the trigger words list"
       }
     },
     "history": {

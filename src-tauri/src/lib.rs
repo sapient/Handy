@@ -11,6 +11,7 @@ mod input;
 mod llm_client;
 mod managers;
 mod overlay;
+mod post_process_command;
 mod settings;
 mod shortcut;
 mod signal_handle;
@@ -278,6 +279,10 @@ pub fn run(cli_args: CliArgs) {
         shortcut::change_auto_submit_setting,
         shortcut::change_auto_submit_key_setting,
         shortcut::change_post_process_enabled_setting,
+        shortcut::change_post_process_use_external_command_setting,
+        shortcut::change_post_process_command_program_setting,
+        shortcut::change_post_process_command_args_setting,
+        shortcut::change_post_process_command_working_directory_setting,
         shortcut::change_experimental_enabled_setting,
         shortcut::change_post_process_base_url_setting,
         shortcut::change_post_process_api_key_setting,
@@ -289,6 +294,7 @@ pub fn run(cli_args: CliArgs) {
         shortcut::delete_post_process_prompt,
         shortcut::set_post_process_selected_prompt,
         shortcut::update_custom_words,
+        shortcut::update_post_process_trigger_words,
         shortcut::suspend_binding,
         shortcut::resume_binding,
         shortcut::change_mute_while_recording_setting,

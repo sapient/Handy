@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from "react";
 import { Toaster } from "sonner";
+import { toast } from "sonner";
 import { useTranslation } from "react-i18next";
+import { listen } from "@tauri-apps/api/event";
 import { platform } from "@tauri-apps/plugin-os";
 import {
   checkAccessibilityPermission,
@@ -52,6 +54,35 @@ function App() {
   useEffect(() => {
     initializeRTL(i18n.language);
   }, [i18n.language]);
+
+  useEffect(() => {
+    let mounted = true;
+    const unlistenPromise = listen<{
+      kind?: "success" | "error" | "warning" | "info";
+      message?: string;
+    }>("post-process-notification", (event) => {
+      if (!mounted) return;
+
+      const kind = event.payload.kind ?? "info";
+      const message = event.payload.message?.trim();
+      if (!message) return;
+
+      if (kind === "error") {
+        toast.error(message);
+      } else if (kind === "warning") {
+        toast.warning(message);
+      } else if (kind === "success") {
+        toast.success(message);
+      } else {
+        toast(message);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      void unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, []);
 
   // Initialize Enigo, shortcuts, and refresh audio devices when main app loads
   useEffect(() => {

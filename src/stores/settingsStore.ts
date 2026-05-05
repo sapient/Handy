@@ -109,6 +109,8 @@ const settingUpdaters: {
     commands.changeOverlayPositionSetting(value as string),
   debug_mode: (value) => commands.changeDebugModeSetting(value as boolean),
   custom_words: (value) => commands.updateCustomWords(value as string[]),
+  post_process_trigger_words: (value) =>
+    commands.updatePostProcessTriggerWords(value as string[]),
   word_correction_threshold: (value) =>
     commands.changeWordCorrectionThresholdSetting(value as number),
   paste_method: (value) => commands.changePasteMethodSetting(value as string),
@@ -123,6 +125,18 @@ const settingUpdaters: {
   history_limit: (value) => commands.updateHistoryLimit(value as number),
   post_process_enabled: (value) =>
     commands.changePostProcessEnabledSetting(value as boolean),
+  post_process_use_external_command: (value) =>
+    commands.changePostProcessUseExternalCommandSetting(value as boolean),
+  post_process_command_program: (value) =>
+    commands.changePostProcessCommandProgramSetting(
+      (value as string | null) || null,
+    ),
+  post_process_command_args: (value) =>
+    commands.changePostProcessCommandArgsSetting(value as string[]),
+  post_process_command_working_directory: (value) =>
+    commands.changePostProcessCommandWorkingDirectorySetting(
+      (value as string | null) || null,
+    ),
   post_process_selected_prompt_id: (value) =>
     commands.setPostProcessSelectedPrompt(value as string),
   mute_while_recording: (value) =>

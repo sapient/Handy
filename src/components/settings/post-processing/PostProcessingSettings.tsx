@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { RefreshCcw } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "@/bindings";
 
 import { Alert } from "../../ui/Alert";
@@ -13,13 +14,16 @@ import {
 import { Button } from "../../ui/Button";
 import { ResetButton } from "../../ui/ResetButton";
 import { Input } from "../../ui/Input";
+import { ToggleSwitch } from "../../ui/ToggleSwitch";
 
 import { ProviderSelect } from "../PostProcessingSettingsApi/ProviderSelect";
 import { BaseUrlField } from "../PostProcessingSettingsApi/BaseUrlField";
 import { ApiKeyField } from "../PostProcessingSettingsApi/ApiKeyField";
 import { ModelSelect } from "../PostProcessingSettingsApi/ModelSelect";
 import { usePostProcessProviderState } from "../PostProcessingSettingsApi/usePostProcessProviderState";
+import { PostProcessingToggle } from "../PostProcessingToggle";
 import { ShortcutInput } from "../ShortcutInput";
+import { TriggerWords } from "../TriggerWords";
 import { useSettings } from "../../../hooks/useSettings";
 
 const PostProcessingSettingsApiComponent: React.FC = () => {
@@ -139,6 +143,207 @@ const PostProcessingSettingsApiComponent: React.FC = () => {
           </div>
         </SettingContainer>
       )}
+    </>
+  );
+};
+
+const PostProcessingCommandComponent: React.FC = () => {
+  const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const [program, setProgram] = useState("");
+  const [workingDirectory, setWorkingDirectory] = useState("");
+  const [argsText, setArgsText] = useState("");
+
+  const savedProgram = getSetting("post_process_command_program") || "";
+  const savedWorkingDirectory =
+    getSetting("post_process_command_working_directory") || "";
+  const savedArgs = getSetting("post_process_command_args") || [];
+  const hasProgram = savedProgram.trim().length > 0;
+  const hasArgs = savedArgs.length > 0;
+
+  useEffect(() => {
+    setProgram(savedProgram);
+  }, [savedProgram]);
+
+  useEffect(() => {
+    setWorkingDirectory(savedWorkingDirectory);
+  }, [savedWorkingDirectory]);
+
+  useEffect(() => {
+    setArgsText(savedArgs.join("\n"));
+  }, [savedArgs]);
+
+  const handleProgramBlur = () => {
+    const nextValue = program.trim();
+    if (nextValue === savedProgram) return;
+    updateSetting("post_process_command_program", nextValue || null);
+  };
+
+  const handleWorkingDirectoryBlur = () => {
+    const nextValue = workingDirectory.trim();
+    if (nextValue === savedWorkingDirectory) return;
+    updateSetting("post_process_command_working_directory", nextValue || null);
+  };
+
+  const handleArgsBlur = () => {
+    const nextValue = argsText
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (JSON.stringify(nextValue) === JSON.stringify(savedArgs)) return;
+    updateSetting("post_process_command_args", nextValue);
+  };
+
+  const handlePickDirectory = async () => {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      defaultPath: workingDirectory || undefined,
+    });
+
+    if (typeof selected === "string") {
+      setWorkingDirectory(selected);
+      updateSetting("post_process_command_working_directory", selected);
+    }
+  };
+
+  return (
+    <>
+      {(!hasProgram || !hasArgs) && (
+        <Alert variant="warning" contained>
+          {!hasProgram && !hasArgs
+            ? t("settings.postProcessing.command.validation.missingProgramAndArgs")
+            : !hasProgram
+              ? t("settings.postProcessing.command.validation.missingProgram")
+              : t("settings.postProcessing.command.validation.missingArgs")}
+        </Alert>
+      )}
+
+      <SettingContainer
+        title={t("settings.postProcessing.command.program.title")}
+        description={t("settings.postProcessing.command.program.description")}
+        descriptionMode="tooltip"
+        layout="horizontal"
+        grouped={true}
+      >
+        <div className="flex items-center gap-2">
+          <Input
+            type="text"
+            value={program}
+            onChange={(event) => setProgram(event.target.value)}
+            onBlur={handleProgramBlur}
+            placeholder={t(
+              "settings.postProcessing.command.program.placeholder",
+            )}
+            variant="compact"
+            disabled={isUpdating("post_process_command_program")}
+            className="min-w-[260px]"
+          />
+        </div>
+      </SettingContainer>
+
+      <SettingContainer
+        title={t(
+          "settings.postProcessing.command.workingDirectory.title",
+        )}
+        description={t(
+          "settings.postProcessing.command.workingDirectory.description",
+        )}
+        descriptionMode="tooltip"
+        layout="horizontal"
+        grouped={true}
+      >
+        <div className="flex items-center gap-2">
+          <Input
+            type="text"
+            value={workingDirectory}
+            onChange={(event) => setWorkingDirectory(event.target.value)}
+            onBlur={handleWorkingDirectoryBlur}
+            placeholder={t(
+              "settings.postProcessing.command.workingDirectory.placeholder",
+            )}
+            variant="compact"
+            disabled={isUpdating("post_process_command_working_directory")}
+            className="min-w-[320px]"
+          />
+          <Button
+            onClick={handlePickDirectory}
+            variant="secondary"
+            size="md"
+            disabled={isUpdating("post_process_command_working_directory")}
+          >
+            {t("settings.postProcessing.command.workingDirectory.browse")}
+          </Button>
+        </div>
+      </SettingContainer>
+
+      <SettingContainer
+        title={t("settings.postProcessing.command.args.title")}
+        description={t("settings.postProcessing.command.args.description")}
+        descriptionMode="tooltip"
+        layout="stacked"
+        grouped={true}
+      >
+        <div className="space-y-2">
+          <Textarea
+            value={argsText}
+            onChange={(event) => setArgsText(event.target.value)}
+            onBlur={handleArgsBlur}
+            placeholder={t(
+              "settings.postProcessing.command.args.placeholder",
+            )}
+          />
+          <p className="text-xs text-mid-gray/70">
+            {t("settings.postProcessing.command.args.tip")}
+          </p>
+        </div>
+      </SettingContainer>
+
+      <SettingContainer
+        title={t("settings.postProcessing.command.help.title")}
+        description={t("settings.postProcessing.command.help.description")}
+        descriptionMode="tooltip"
+        layout="stacked"
+        grouped={true}
+      >
+        <div className="space-y-3 text-sm">
+          <div className="rounded-md border border-mid-gray/20 bg-mid-gray/5 p-3">
+            <p className="font-medium">
+              {t("settings.postProcessing.command.help.codex.title")}
+            </p>
+            <p className="mt-1 text-xs text-mid-gray/70">
+              {t("settings.postProcessing.command.help.programLabel")}{" "}
+              <code>{t("settings.postProcessing.command.help.codex.program")}</code>
+            </p>
+            <pre className="mt-2 overflow-x-auto text-xs text-mid-gray/80 whitespace-pre-wrap">
+              {t("settings.postProcessing.command.help.codex.args")}
+            </pre>
+          </div>
+
+          <div className="rounded-md border border-mid-gray/20 bg-mid-gray/5 p-3">
+            <p className="font-medium">
+              {t("settings.postProcessing.command.help.claude.title")}
+            </p>
+            <p className="mt-1 text-xs text-mid-gray/70">
+              {t("settings.postProcessing.command.help.programLabel")}{" "}
+              <code>{t("settings.postProcessing.command.help.claude.program")}</code>
+            </p>
+            <pre className="mt-2 overflow-x-auto text-xs text-mid-gray/80 whitespace-pre-wrap">
+              {t("settings.postProcessing.command.help.claude.args")}
+            </pre>
+          </div>
+
+          <div className="rounded-md border border-mid-gray/20 bg-mid-gray/5 p-3">
+            <p className="font-medium">
+              {t("settings.postProcessing.command.help.notification.title")}
+            </p>
+            <pre className="mt-2 overflow-x-auto text-xs text-mid-gray/80 whitespace-pre-wrap">
+              {t("settings.postProcessing.command.help.notification.example")}
+            </pre>
+          </div>
+        </div>
+      </SettingContainer>
     </>
   );
 };
@@ -425,10 +630,13 @@ PostProcessingSettingsPrompts.displayName = "PostProcessingSettingsPrompts";
 
 export const PostProcessingSettings: React.FC = () => {
   const { t } = useTranslation();
+  const { getSetting, updateSetting, isUpdating } = useSettings();
+  const useExternalCommand = getSetting("post_process_use_external_command") || false;
 
   return (
     <div className="max-w-3xl w-full mx-auto space-y-6">
       <SettingsGroup title={t("settings.postProcessing.hotkey.title")}>
+        <PostProcessingToggle descriptionMode="tooltip" grouped={true} />
         <ShortcutInput
           shortcutId="transcribe_with_post_process"
           descriptionMode="tooltip"
@@ -436,8 +644,33 @@ export const PostProcessingSettings: React.FC = () => {
         />
       </SettingsGroup>
 
-      <SettingsGroup title={t("settings.postProcessing.api.title")}>
-        <PostProcessingSettingsApi />
+      <SettingsGroup>
+        <TriggerWords />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title={
+          useExternalCommand
+            ? t("settings.postProcessing.command.title")
+            : t("settings.postProcessing.api.title")
+        }
+      >
+        <ToggleSwitch
+          checked={useExternalCommand}
+          onChange={(enabled) =>
+            updateSetting("post_process_use_external_command", enabled)
+          }
+          isUpdating={isUpdating("post_process_use_external_command")}
+          label={t("settings.postProcessing.command.toggle.title")}
+          description={t("settings.postProcessing.command.toggle.description")}
+          descriptionMode="tooltip"
+          grouped={true}
+        />
+        {useExternalCommand ? (
+          <PostProcessingCommandComponent />
+        ) : (
+          <PostProcessingSettingsApi />
+        )}
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.postProcessing.prompts.title")}>

@@ -103,6 +103,8 @@ pub struct PostProcessProvider {
     pub models_endpoint: Option<String>,
     #[serde(default)]
     pub supports_structured_output: bool,
+    #[serde(default)]
+    pub supports_tool_calls: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Type)]
@@ -344,6 +346,16 @@ pub struct AppSettings {
     #[serde(default)]
     pub post_process_selected_prompt_id: Option<String>,
     #[serde(default)]
+    pub post_process_use_external_command: bool,
+    pub post_process_command_program: Option<String>,
+    #[serde(default)]
+    pub post_process_command_args: Vec<String>,
+    pub post_process_command_working_directory: Option<String>,
+    #[serde(default)]
+    pub post_process_file_access_enabled: bool,
+    #[serde(default)]
+    pub post_process_allowed_paths: Vec<String>,
+    #[serde(default)]
     pub mute_while_recording: bool,
     #[serde(default)]
     pub append_trailing_space: bool,
@@ -360,6 +372,8 @@ pub struct AppSettings {
     #[serde(default = "default_typing_tool")]
     pub typing_tool: TypingTool,
     pub external_script_path: Option<String>,
+    #[serde(default)]
+    pub post_process_trigger_words: Vec<String>,
 }
 
 fn default_model() -> String {
@@ -460,6 +474,7 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             allow_base_url_edit: false,
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: true,
+            supports_tool_calls: true,
         },
         PostProcessProvider {
             id: "zai".to_string(),
@@ -468,6 +483,7 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             allow_base_url_edit: false,
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: true,
+            supports_tool_calls: true,
         },
         PostProcessProvider {
             id: "openrouter".to_string(),
@@ -476,6 +492,7 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             allow_base_url_edit: false,
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: true,
+            supports_tool_calls: true,
         },
         PostProcessProvider {
             id: "anthropic".to_string(),
@@ -484,6 +501,7 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             allow_base_url_edit: false,
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: false,
+            supports_tool_calls: false,
         },
         PostProcessProvider {
             id: "groq".to_string(),
@@ -492,6 +510,7 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             allow_base_url_edit: false,
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: false,
+            supports_tool_calls: true,
         },
         PostProcessProvider {
             id: "cerebras".to_string(),
@@ -500,6 +519,7 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             allow_base_url_edit: false,
             models_endpoint: Some("/models".to_string()),
             supports_structured_output: true,
+            supports_tool_calls: true,
         },
     ];
 
@@ -516,6 +536,7 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
             allow_base_url_edit: false,
             models_endpoint: None,
             supports_structured_output: true,
+            supports_tool_calls: false,
         });
     }
 
@@ -527,6 +548,7 @@ fn default_post_process_providers() -> Vec<PostProcessProvider> {
         allow_base_url_edit: true,
         models_endpoint: Some("/models".to_string()),
         supports_structured_output: false,
+        supports_tool_calls: true,
     });
 
     providers
@@ -580,7 +602,7 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
             .find(|p| p.id == provider.id)
         {
             Some(existing) => {
-                // Sync supports_structured_output field for existing providers (migration)
+                // Sync provider capability flags for existing providers (migration)
                 if existing.supports_structured_output != provider.supports_structured_output {
                     debug!(
                         "Updating supports_structured_output for provider '{}' from {} to {}",
@@ -589,6 +611,16 @@ fn ensure_post_process_defaults(settings: &mut AppSettings) -> bool {
                         provider.supports_structured_output
                     );
                     existing.supports_structured_output = provider.supports_structured_output;
+                    changed = true;
+                }
+                if existing.supports_tool_calls != provider.supports_tool_calls {
+                    debug!(
+                        "Updating supports_tool_calls for provider '{}' from {} to {}",
+                        provider.id,
+                        existing.supports_tool_calls,
+                        provider.supports_tool_calls
+                    );
+                    existing.supports_tool_calls = provider.supports_tool_calls;
                     changed = true;
                 }
             }
@@ -715,6 +747,12 @@ pub fn get_default_settings() -> AppSettings {
         post_process_models: default_post_process_models(),
         post_process_prompts: default_post_process_prompts(),
         post_process_selected_prompt_id: None,
+        post_process_use_external_command: false,
+        post_process_command_program: None,
+        post_process_command_args: Vec::new(),
+        post_process_command_working_directory: None,
+        post_process_file_access_enabled: false,
+        post_process_allowed_paths: Vec::new(),
         mute_while_recording: false,
         append_trailing_space: false,
         app_language: default_app_language(),
@@ -724,6 +762,7 @@ pub fn get_default_settings() -> AppSettings {
         paste_delay_ms: default_paste_delay_ms(),
         typing_tool: default_typing_tool(),
         external_script_path: None,
+        post_process_trigger_words: Vec::new(),
     }
 }
 

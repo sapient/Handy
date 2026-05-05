@@ -14,11 +14,12 @@ use crate::TranscriptionCoordinator;
 use ferrous_opencc::{config::BuiltinConfig, OpenCC};
 use log::{debug, error, warn};
 use once_cell::sync::Lazy;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::AppHandle;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// Drop guard that notifies the [`TranscriptionCoordinator`] when the
 /// transcription pipeline finishes — whether it completes normally or panics.
@@ -45,6 +46,23 @@ struct TranscribeAction {
 /// Field name for structured output JSON schema
 const TRANSCRIPTION_FIELD: &str = "transcription";
 
+#[derive(Debug)]
+enum PostProcessOutcome {
+    Paste(String),
+    Notify(String),
+}
+
+#[derive(Debug, Deserialize)]
+struct PostProcessEnvelope {
+    action: String,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
 /// Strip invisible Unicode characters that some LLMs may insert
 fn strip_invisible_chars(s: &str) -> String {
     s.replace(['\u{200B}', '\u{200C}', '\u{200D}', '\u{FEFF}'], "")
@@ -56,34 +74,68 @@ fn build_system_prompt(prompt_template: &str) -> String {
     prompt_template.replace("${output}", "").trim().to_string()
 }
 
-async fn post_process_transcription(settings: &AppSettings, transcription: &str) -> Option<String> {
-    let provider = match settings.active_post_process_provider().cloned() {
-        Some(provider) => provider,
-        None => {
-            debug!("Post-processing enabled but no provider is selected");
-            return None;
+fn preview_for_log(value: &str) -> String {
+    const LIMIT: usize = 240;
+    let trimmed = value.trim();
+    if trimmed.len() <= LIMIT {
+        return trimmed.to_string();
+    }
+    format!("{}...", &trimmed[..LIMIT])
+}
+
+fn parse_post_process_output(raw: &str) -> PostProcessOutcome {
+    let cleaned = strip_invisible_chars(raw).trim().to_string();
+
+    if let Ok(parsed) = serde_json::from_str::<PostProcessEnvelope>(&cleaned) {
+        let payload = parsed
+            .text
+            .or(parsed.content)
+            .or(parsed.message)
+            .unwrap_or_default();
+
+        if parsed.action.eq_ignore_ascii_case("notify") {
+            debug!(
+                "Post-process output resolved to notification. message_preview='{}'",
+                preview_for_log(&payload)
+            );
+            return PostProcessOutcome::Notify(payload.trim().to_string());
         }
-    };
 
-    let model = settings
-        .post_process_models
-        .get(&provider.id)
-        .cloned()
-        .unwrap_or_default();
-
-    if model.trim().is_empty() {
-        debug!(
-            "Post-processing skipped because provider '{}' has no model configured",
-            provider.id
-        );
-        return None;
+        if parsed.action.eq_ignore_ascii_case("paste") {
+            debug!(
+                "Post-process output resolved to paste via JSON envelope. text_preview='{}'",
+                preview_for_log(&payload)
+            );
+            return PostProcessOutcome::Paste(payload);
+        }
     }
 
+    debug!(
+        "Post-process output resolved to paste via raw stdout. text_preview='{}'",
+        preview_for_log(&cleaned)
+    );
+    PostProcessOutcome::Paste(cleaned)
+}
+
+fn emit_post_process_notification(app: &AppHandle, kind: &str, message: &str) {
+    let _ = app.emit(
+        "post-process-notification",
+        serde_json::json!({
+            "kind": kind,
+            "message": message,
+        }),
+    );
+}
+
+async fn post_process_transcription(
+    settings: &AppSettings,
+    transcription: &str,
+) -> Result<Option<PostProcessOutcome>, String> {
     let selected_prompt_id = match &settings.post_process_selected_prompt_id {
         Some(id) => id.clone(),
         None => {
             debug!("Post-processing skipped because no prompt is selected");
-            return None;
+            return Ok(None);
         }
     };
 
@@ -98,18 +150,53 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                 "Post-processing skipped because prompt '{}' was not found",
                 selected_prompt_id
             );
-            return None;
+            return Ok(None);
         }
     };
 
     if prompt.trim().is_empty() {
         debug!("Post-processing skipped because the selected prompt is empty");
-        return None;
+        return Ok(None);
+    }
+
+    if settings.post_process_use_external_command {
+        debug!(
+            "Post-processing handoff selected: external command. transcript_preview='{}'",
+            preview_for_log(transcription)
+        );
+        let output =
+            crate::post_process_command::run_post_process_command(settings, &prompt, transcription)
+                .await?;
+        return Ok(Some(parse_post_process_output(&output)));
+    }
+
+    let provider = match settings.active_post_process_provider().cloned() {
+        Some(provider) => provider,
+        None => {
+            debug!("Post-processing enabled but no provider is selected");
+            return Ok(None);
+        }
+    };
+
+    let model = settings
+        .post_process_models
+        .get(&provider.id)
+        .cloned()
+        .unwrap_or_default();
+
+    if model.trim().is_empty() {
+        debug!(
+            "Post-processing skipped because provider '{}' has no model configured",
+            provider.id
+        );
+        return Ok(None);
     }
 
     debug!(
-        "Starting LLM post-processing with provider '{}' (model: {})",
-        provider.id, model
+        "Post-processing handoff selected: LLM provider='{}' model='{}'. transcript_preview='{}'",
+        provider.id,
+        model,
+        preview_for_log(transcription)
     );
 
     let api_key = settings
@@ -132,7 +219,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                     debug!(
                         "Apple Intelligence selected but not currently available on this device"
                     );
-                    return None;
+                    return Ok(None);
                 }
 
                 let token_limit = model.trim().parse::<i32>().unwrap_or(0);
@@ -144,19 +231,19 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                     Ok(result) => {
                         if result.trim().is_empty() {
                             debug!("Apple Intelligence returned an empty response");
-                            None
+                            Ok(None)
                         } else {
                             let result = strip_invisible_chars(&result);
                             debug!(
                                 "Apple Intelligence post-processing succeeded. Output length: {} chars",
                                 result.len()
                             );
-                            Some(result)
+                            Ok(Some(PostProcessOutcome::Paste(result)))
                         }
                     }
                     Err(err) => {
                         error!("Apple Intelligence post-processing failed: {}", err);
-                        None
+                        Ok(None)
                     }
                 };
             }
@@ -164,7 +251,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
             #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
             {
                 debug!("Apple Intelligence provider selected on unsupported platform");
-                return None;
+                return Ok(None);
             }
         }
 
@@ -204,10 +291,12 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                                 provider.id,
                                 result.len()
                             );
-                            return Some(result);
+                            return Ok(Some(PostProcessOutcome::Paste(result)));
                         } else {
                             error!("Structured output response missing 'transcription' field");
-                            return Some(strip_invisible_chars(&content));
+                            return Ok(Some(PostProcessOutcome::Paste(strip_invisible_chars(
+                                &content,
+                            ))));
                         }
                     }
                     Err(e) => {
@@ -215,13 +304,15 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                             "Failed to parse structured output JSON: {}. Returning raw content.",
                             e
                         );
-                        return Some(strip_invisible_chars(&content));
+                        return Ok(Some(PostProcessOutcome::Paste(strip_invisible_chars(
+                            &content,
+                        ))));
                     }
                 }
             }
             Ok(None) => {
                 error!("LLM API response has no content");
-                return None;
+                return Ok(None);
             }
             Err(e) => {
                 warn!(
@@ -247,11 +338,11 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                 provider.id,
                 content.len()
             );
-            Some(content)
+            Ok(Some(PostProcessOutcome::Paste(content)))
         }
         Ok(None) => {
             error!("LLM API response has no content");
-            None
+            Ok(None)
         }
         Err(e) => {
             error!(
@@ -259,7 +350,7 @@ async fn post_process_transcription(settings: &AppSettings, transcription: &str)
                 provider.id,
                 e
             );
-            None
+            Ok(None)
         }
     }
 }
@@ -432,6 +523,8 @@ impl ShortcutAction for TranscribeAction {
                             let mut final_text = transcription.clone();
                             let mut post_processed_text: Option<String> = None;
                             let mut post_process_prompt: Option<String> = None;
+                            let mut should_paste_final_text = true;
+                            let mut trigger_word_matched = false;
 
                             // First, check if Chinese variant conversion is needed
                             if let Some(converted_text) =
@@ -440,31 +533,110 @@ impl ShortcutAction for TranscribeAction {
                                 final_text = converted_text;
                             }
 
-                            // Then apply LLM post-processing if this is the post-process hotkey
-                            // Uses final_text which may already have Chinese conversion applied
-                            if post_process {
-                                show_processing_overlay(&ah);
-                            }
-                            let processed = if post_process {
-                                post_process_transcription(&settings, &final_text).await
-                            } else {
-                                None
-                            };
-                            if let Some(processed_text) = processed {
-                                post_processed_text = Some(processed_text.clone());
-                                final_text = processed_text;
-
-                                // Get the prompt that was used
-                                if let Some(prompt_id) = &settings.post_process_selected_prompt_id {
-                                    if let Some(prompt) = settings
-                                        .post_process_prompts
+                            // Check if the first word matches a configured trigger word.
+                            // If so, strip it and route to LLM even without the post-process hotkey.
+                            let mut should_post_process = post_process;
+                            if !settings.post_process_trigger_words.is_empty() {
+                                if let Some(first_word) = final_text.split_whitespace().next() {
+                                    if settings
+                                        .post_process_trigger_words
                                         .iter()
-                                        .find(|p| &p.id == prompt_id)
+                                        .any(|w| w.eq_ignore_ascii_case(first_word))
                                     {
-                                        post_process_prompt = Some(prompt.prompt.clone());
+                                        let rest =
+                                            final_text[first_word.len()..].trim_start().to_string();
+                                        if rest.is_empty() {
+                                            // Trigger word with no content — nothing to process
+                                            debug!("Trigger word '{}' matched but no content followed; skipping", first_word);
+                                            utils::hide_recording_overlay(&ah);
+                                            change_tray_icon(&ah, TrayIconState::Idle);
+                                            return;
+                                        }
+                                        debug!(
+                                            "Trigger word '{}' matched; routing transcription to post-processing. remaining_preview='{}'",
+                                            first_word,
+                                            preview_for_log(&rest)
+                                        );
+                                        final_text = rest;
+                                        should_post_process = true;
+                                        trigger_word_matched = true;
                                     }
                                 }
-                            } else if final_text != transcription {
+                            }
+
+                            debug!(
+                                "Post-processing decision made. shortcut_post_process={}, trigger_word_matched={}, should_post_process={}, use_external_command={}",
+                                post_process,
+                                trigger_word_matched,
+                                should_post_process,
+                                settings.post_process_use_external_command
+                            );
+
+                            // Then apply LLM post-processing if triggered by hotkey or trigger word
+                            // Uses final_text which may already have Chinese conversion applied
+                            if should_post_process {
+                                show_processing_overlay(&ah);
+                            }
+                            let processed = if should_post_process {
+                                post_process_transcription(&settings, &final_text).await
+                            } else {
+                                Ok(None)
+                            };
+                            match processed {
+                                Ok(Some(PostProcessOutcome::Paste(processed_text))) => {
+                                    debug!(
+                                        "Post-processing returned paste text. text_preview='{}'",
+                                        preview_for_log(&processed_text)
+                                    );
+                                    post_processed_text = Some(processed_text.clone());
+                                    final_text = processed_text;
+
+                                    if let Some(prompt_id) = &settings.post_process_selected_prompt_id
+                                    {
+                                        if let Some(prompt) = settings
+                                            .post_process_prompts
+                                            .iter()
+                                            .find(|p| &p.id == prompt_id)
+                                        {
+                                            post_process_prompt = Some(prompt.prompt.clone());
+                                        }
+                                    }
+                                }
+                                Ok(Some(PostProcessOutcome::Notify(message))) => {
+                                    debug!(
+                                        "Post-processing returned notification only. message_preview='{}'",
+                                        preview_for_log(&message)
+                                    );
+                                    post_processed_text = Some(message.clone());
+                                    should_paste_final_text = false;
+                                    emit_post_process_notification(&ah, "success", &message);
+
+                                    if let Some(prompt_id) = &settings.post_process_selected_prompt_id
+                                    {
+                                        if let Some(prompt) = settings
+                                            .post_process_prompts
+                                            .iter()
+                                            .find(|p| &p.id == prompt_id)
+                                        {
+                                            post_process_prompt = Some(prompt.prompt.clone());
+                                        }
+                                    }
+                                }
+                                Ok(None) => {
+                                    debug!("Post-processing was invoked but returned no result");
+                                }
+                                Err(e) => {
+                                    error!("Post-processing failed: {}", e);
+                                    emit_post_process_notification(&ah, "error", &e);
+                                    if settings.post_process_use_external_command
+                                        || trigger_word_matched
+                                    {
+                                        should_paste_final_text = false;
+                                    }
+                                }
+                            }
+
+                            if post_processed_text.is_none() && final_text != transcription {
                                 // Chinese conversion was applied but no LLM post-processing
                                 post_processed_text = Some(final_text.clone());
                             }
@@ -486,18 +658,20 @@ impl ShortcutAction for TranscribeAction {
                                 }
                             });
 
-                            // Paste the final text (either processed or original)
+                            // Paste the final text when the processor explicitly returned text.
+                            // Command-style trigger words can instead resolve to a notification.
                             let ah_clone = ah.clone();
                             let paste_time = Instant::now();
                             ah.run_on_main_thread(move || {
-                                match utils::paste(final_text, ah_clone.clone()) {
-                                    Ok(()) => debug!(
-                                        "Text pasted successfully in {:?}",
-                                        paste_time.elapsed()
-                                    ),
-                                    Err(e) => error!("Failed to paste transcription: {}", e),
+                                if should_paste_final_text {
+                                    match utils::paste(final_text, ah_clone.clone()) {
+                                        Ok(()) => debug!(
+                                            "Text pasted successfully in {:?}",
+                                            paste_time.elapsed()
+                                        ),
+                                        Err(e) => error!("Failed to paste transcription: {}", e),
+                                    }
                                 }
-                                // Hide the overlay after transcription is complete
                                 utils::hide_recording_overlay(&ah_clone);
                                 change_tray_icon(&ah_clone, TrayIconState::Idle);
                             })

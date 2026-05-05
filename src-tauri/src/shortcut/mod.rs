@@ -648,6 +648,18 @@ pub fn update_custom_words(app: AppHandle, words: Vec<String>) -> Result<(), Str
 
 #[tauri::command]
 #[specta::specta]
+pub fn update_post_process_trigger_words(
+    app: AppHandle,
+    words: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.post_process_trigger_words = words;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
 pub fn change_word_correction_threshold_setting(
     app: AppHandle,
     threshold: f64,
@@ -792,6 +804,54 @@ pub fn change_post_process_enabled_setting(app: AppHandle, enabled: bool) -> Res
         }
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_post_process_use_external_command_setting(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.post_process_use_external_command = enabled;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_post_process_command_program_setting(
+    app: AppHandle,
+    program: Option<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.post_process_command_program = program;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_post_process_command_args_setting(
+    app: AppHandle,
+    args: Vec<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.post_process_command_args = args;
+    settings::write_settings(&app, settings);
+    Ok(())
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn change_post_process_command_working_directory_setting(
+    app: AppHandle,
+    path: Option<String>,
+) -> Result<(), String> {
+    let mut settings = settings::get_settings(&app);
+    settings.post_process_command_working_directory = path;
+    settings::write_settings(&app, settings);
     Ok(())
 }
 
